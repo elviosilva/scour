@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 use std::process::ExitCode;
 
 use scour_core::ipc::{Request, Response, PROTOCOL_VERSION};
-use scour_core::ops;
+use scour_core::ops::{self, Policy};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -46,9 +46,13 @@ fn main() -> ExitCode {
         )));
     }
 
-    // Execute each operation. `ops::execute` re-validates internally, so even a
-    // tampered request cannot escape the allowlist.
-    let outcomes = ops::execute_batch(&req.operations, req.dry_run);
+    // Build the deletion policy: the built-in protected set is always applied;
+    // caller-supplied excludes can only add further protection, never remove it.
+    let (policy, _warnings) = Policy::with_excludes(&req.exclude);
+
+    // Execute each operation. `execute_with` re-validates internally, so even a
+    // tampered request cannot escape the allowlist or the protected set.
+    let outcomes = ops::execute_batch_with(&req.operations, req.dry_run, &policy);
 
     emit(Response {
         version: PROTOCOL_VERSION,

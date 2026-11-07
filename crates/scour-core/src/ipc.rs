@@ -25,6 +25,12 @@ pub struct Request {
     pub operations: Vec<Operation>,
     /// If true the helper reports what it would do without deleting.
     pub dry_run: bool,
+    /// User exclusion globs forwarded to the helper. These only ever *prevent*
+    /// deletions, so accepting them from the caller cannot widen what the
+    /// helper removes; the helper always adds its own built-in protected set on
+    /// top regardless of what is sent here.
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 impl Request {
@@ -33,7 +39,13 @@ impl Request {
             version: PROTOCOL_VERSION,
             operations,
             dry_run,
+            exclude: Vec::new(),
         }
+    }
+
+    pub fn with_exclude(mut self, exclude: Vec<String>) -> Self {
+        self.exclude = exclude;
+        self
     }
 
     pub fn to_line(&self) -> Result<String, serde_json::Error> {

@@ -56,7 +56,27 @@ scour clean --apply --include-review
 
 # Interactive terminal UI
 scour tui
+
+# Use an explicit config file
+scour --config ./scour.toml scan
 ```
+
+## Configuration
+
+scour reads `scour.toml` from `<config-dir>/scour/scour.toml` (or `--config
+<path>`). See [`packaging/scour.example.toml`](packaging/scour.example.toml).
+It can:
+
+- tune scan thresholds (`large_min_size`, `old_after_days`, `dupe_min_size`,
+  `follow_symlinks`);
+- add managed `allow_roots` (same effect as the `SCOUR_ALLOW_ROOT` env var);
+- add `exclude` globs that must never be deleted.
+
+Exclusions only ever *prevent* deletions, so they are safe to forward to the
+privileged helper. A **built-in protected set** (SSH/GPG keys, password stores,
+keychains, crypto wallets, cloud credentials) is always enforced on top and
+cannot be disabled — even a file sitting inside a cache directory is refused if
+it matches.
 
 ## Privilege separation
 

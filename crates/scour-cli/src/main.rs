@@ -6,13 +6,17 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use humansize::{format_size, BINARY};
 
+use scour_core::config::Config;
 use scour_core::model::{Category, Finding, RiskLevel, ScanReport};
-use scour_core::ops::{self, OpStatus};
-use scour_core::scan::{self, ScanOptions};
+use scour_core::ops::{self, OpStatus, Policy};
+use scour_core::scan;
 
 #[derive(Parser)]
 #[command(name = "scour", version, about = "Cross-platform disk cleaner")]
 struct Cli {
+    /// Path to a scour.toml config (defaults to <config-dir>/scour/scour.toml).
+    #[arg(long, global = true)]
+    config: Option<std::path::PathBuf>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -90,8 +94,19 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Load config (explicit path, else conventional default, else built-in
+    // defaults) and apply its custom roots to the environment the scanners read.
+    let config = match &cli.config {
+        Some(p) => Config::load(p)?,
+        None => Config::load_default()?,
+    };
+    apply_allow_roots(&config);
+
     match cli.command {
-        Commands::Scan { categories, json } => cmd_scan(&resolve_categories(&categories), json),
+        Commands::Scan { categories, json } => {
+            cmd_scan(&resolve_categories(&categories), json, &config)
+        }
         Commands::Clean {
             categories,
             apply,
@@ -104,19 +119,33 @@ fn main() -> Result<()> {
             include_review,
             include_manual,
             yes,
+            &config,
         ),
         Commands::Tui { categories } => {
-            let opts = ScanOptions::default();
-            let report = scan::scan_all(&resolve_categories(&categories), &opts);
+            let report = scan::scan_all(&resolve_categories(&categories), &config.scan_options());
             scour_tui::run(report)?;
             Ok(())
         }
     }
 }
 
-fn cmd_scan(categories: &[Category], json: bool) -> Result<()> {
-    let opts = ScanOptions::default();
-    let report = scan::scan_all(categories, &opts);
+/// Merge config `allow_roots` into `SCOUR_ALLOW_ROOT` so `platform::extra_roots`
+/// (the single mechanism for custom roots) picks them up.
+fn apply_allow_roots(config: &Config) {
+    if config.allow_roots.is_empty() {
+        return;
+    }
+    let mut paths: Vec<std::path::PathBuf> = config.allow_roots.clone();
+    if let Some(existing) = std::env::var_os("SCOUR_ALLOW_ROOT") {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    if let Ok(joined) = std::env::join_paths(paths) {
+        std::env::set_var("SCOUR_ALLOW_ROOT", joined);
+    }
+}
+
+fn cmd_scan(categories: &[Category], json: bool, config: &Config) -> Result<()> {
+    let report = scan::scan_all(categories, &config.scan_options());
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -180,9 +209,16 @@ fn cmd_clean(
     include_review: bool,
     include_manual: bool,
     yes: bool,
+    config: &Config,
 ) -> Result<()> {
-    let opts = ScanOptions::default();
-    let report = scan::scan_all(categories, &opts);
+    let report = scan::scan_all(categories, &config.scan_options());
+
+    // Build the deletion policy from the user's exclusions (built-in protected
+    // paths are always included).
+    let (policy, warnings) = Policy::with_excludes(&config.exclude);
+    for w in &warnings {
+        eprintln!("config: {w}");
+    }
 
     // Select findings by risk policy.
     let selected: Vec<&Finding> = report
@@ -205,7 +241,7 @@ fn cmd_clean(
     let mut privileged = Vec::new();
     let mut rejected = 0usize;
     for f in &selected {
-        match ops::plan(f) {
+        match ops::plan_with(f, &policy) {
             Ok(op) if op.privileged => privileged.push(op),
             Ok(op) => local.push(op),
             Err(_) => rejected += 1,
@@ -238,12 +274,12 @@ fn cmd_clean(
     let mut removed = 0usize;
     let mut failed = 0usize;
 
-    for outcome in ops::execute_batch(&local, dry_run) {
+    for outcome in ops::execute_batch_with(&local, dry_run, &policy) {
         tally(&outcome, &mut reclaimed, &mut removed, &mut failed);
     }
 
     if !privileged.is_empty() {
-        match elevate::run_privileged(&privileged, dry_run) {
+        match elevate::run_privileged(&privileged, dry_run, config.exclude.clone()) {
             Ok(outcomes) => {
                 for outcome in outcomes {
                     tally(&outcome, &mut reclaimed, &mut removed, &mut failed);

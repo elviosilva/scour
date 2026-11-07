@@ -6,6 +6,7 @@
 //! deletions are described as [`ops::Operation`]s and handed to a separate
 //! helper (see `scour-helperd`) over the [`ipc`] protocol.
 
+pub mod config;
 pub mod ipc;
 pub mod model;
 pub mod ops;
@@ -22,6 +23,8 @@ pub enum Error {
     PathNotAllowed(std::path::PathBuf),
     #[error("refusing to operate on a symlink: {0:?}")]
     SymlinkRejected(std::path::PathBuf),
+    #[error("path {0:?} is protected and will never be deleted")]
+    ProtectedPath(std::path::PathBuf),
     #[error("i/o error at {path:?}: {source}")]
     Io {
         path: std::path::PathBuf,

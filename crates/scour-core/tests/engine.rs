@@ -8,8 +8,9 @@
 use std::fs;
 use std::io::Write;
 
+use scour_core::config::Config;
 use scour_core::model::Category;
-use scour_core::ops::{self, OpStatus};
+use scour_core::ops::{self, OpStatus, Policy};
 use scour_core::scan::{self, ScanOptions};
 use scour_core::{platform, Error};
 
@@ -118,6 +119,91 @@ fn rejects_symlinks() {
     assert!(matches!(err, Error::SymlinkRejected(_)));
 
     std::env::remove_var("SCOUR_ALLOW_ROOT");
+}
+
+/// A protected path (e.g. an SSH key) inside an allowed root is never deletable,
+/// even though it passes the allowlist check.
+#[test]
+fn protects_credentials_inside_allowlist() {
+    let dir = tempfile::tempdir().unwrap();
+    std::env::set_var("SCOUR_ALLOW_ROOT", dir.path());
+
+    // Simulate ~/.ssh/id_ed25519 living under a managed root.
+    let ssh = dir.path().join(".ssh");
+    fs::create_dir_all(&ssh).unwrap();
+    let key = ssh.join("id_ed25519");
+    write_file(&key, b"PRIVATE KEY");
+
+    // Allowlist alone would accept it...
+    assert!(platform::classify(Category::Junk, &key).is_some());
+    // ...but the default policy's protected set refuses it.
+    let err = ops::validate_path(Category::Junk, &key).unwrap_err();
+    assert!(matches!(err, Error::ProtectedPath(_)));
+    assert!(key.exists(), "protected file must survive");
+
+    std::env::remove_var("SCOUR_ALLOW_ROOT");
+}
+
+/// A user exclusion glob prevents deletion of matching files.
+#[test]
+fn user_exclude_prevents_deletion() {
+    let dir = tempfile::tempdir().unwrap();
+    std::env::set_var("SCOUR_ALLOW_ROOT", dir.path());
+
+    let keep = dir.path().join("important.bin");
+    write_file(&keep, &vec![5u8; 1024]);
+
+    let (policy, warns) = Policy::with_excludes(["**/important.bin"]);
+    assert!(warns.is_empty());
+
+    let err = ops::validate_path_with(Category::Junk, &keep, &policy).unwrap_err();
+    assert!(matches!(err, Error::ProtectedPath(_)));
+
+    // Without the exclusion it would be allowed.
+    assert!(ops::validate_path(Category::Junk, &keep).is_ok());
+
+    std::env::remove_var("SCOUR_ALLOW_ROOT");
+}
+
+/// Excluding a directory (in either glob form) protects both the directory
+/// itself and everything under it.
+#[test]
+fn directory_exclusion_covers_contents_and_self() {
+    // Contents form protects a wholesale delete of the directory.
+    let (p1, _) = Policy::with_excludes(["**/mozilla/**"]);
+    assert!(p1.is_protected(std::path::Path::new("/home/u/.cache/mozilla")));
+    assert!(p1.is_protected(std::path::Path::new("/home/u/.cache/mozilla/x/y")));
+
+    // Directory form protects files inside via the ancestor walk.
+    let (p2, _) = Policy::with_excludes(["**/mozilla"]);
+    assert!(p2.is_protected(std::path::Path::new("/home/u/.cache/mozilla")));
+    assert!(p2.is_protected(std::path::Path::new("/home/u/.cache/mozilla/deep/file")));
+
+    // A sibling is not affected.
+    assert!(!p2.is_protected(std::path::Path::new("/home/u/.cache/chromium")));
+}
+
+/// Config round-trips through TOML and overrides scan thresholds.
+#[test]
+fn config_parses_and_overrides_thresholds() {
+    let toml = r#"
+        allow_roots = ["/tmp/example-cache"]
+        exclude = ["**/*.keepme"]
+
+        [scan]
+        large_min_size = 1234
+        old_after_days = 7
+        dupe_min_size = 4096
+        follow_symlinks = true
+    "#;
+    let cfg = Config::from_toml(toml).unwrap();
+    assert_eq!(cfg.allow_roots.len(), 1);
+    assert_eq!(cfg.exclude, vec!["**/*.keepme".to_string()]);
+    let opts = cfg.scan_options();
+    assert_eq!(opts.large_min_size, 1234);
+    assert_eq!(opts.old_after_days, 7);
+    assert_eq!(opts.dupe_min_size, 4096);
+    assert!(opts.follow_symlinks);
 }
 
 /// `is_within` rejects parent-dir escapes.

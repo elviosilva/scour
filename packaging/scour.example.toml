@@ -1,0 +1,33 @@
+# Example scour configuration.
+# Install at:
+#   Linux   ~/.config/scour/scour.toml
+#   macOS   ~/Library/Application Support/scour/scour.toml
+#   Windows %APPDATA%\scour\scour.toml
+# or pass explicitly with `scour --config path/to/scour.toml ...`.
+
+# Extra absolute directories to treat as managed cleanup roots, in addition to
+# the OS defaults. (Same effect as the SCOUR_ALLOW_ROOT environment variable.)
+allow_roots = [
+    # "/mnt/bigdisk/caches",
+]
+
+# Glob patterns (matched against the absolute path, case-insensitive,
+# gitignore-style: `*` does not cross `/`, `**` does) that must NEVER be
+# deleted. These are added on top of scour's built-in protected set
+# (SSH/GPG keys, password stores, keychains, wallets, cloud credentials…),
+# which cannot be disabled.
+exclude = [
+    # "**/Projects/**",
+    # "**/*.iso",
+]
+
+[scan]
+# Minimum size (bytes) for the "large files" scan. Default: 100 MiB.
+large_min_size = 104857600
+# A file counts as "old" if untouched for this many days. Default: 180.
+old_after_days = 180
+# Minimum size (bytes) a file must have to be hashed for duplicate detection.
+# Default: 1 MiB.
+dupe_min_size = 1048576
+# Follow symlinks while walking. Off by default for safety.
+follow_symlinks = false

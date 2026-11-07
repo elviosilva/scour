@@ -89,8 +89,13 @@ fn which(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Run a batch of privileged operations through the elevated helper.
-pub fn run_privileged(ops: &[Operation], dry_run: bool) -> Result<Vec<OpOutcome>> {
+/// Run a batch of privileged operations through the elevated helper. `exclude`
+/// carries the user's exclusion globs so the root helper honors them too.
+pub fn run_privileged(
+    ops: &[Operation],
+    dry_run: bool,
+    exclude: Vec<String>,
+) -> Result<Vec<OpOutcome>> {
     if ops.is_empty() {
         return Ok(Vec::new());
     }
@@ -104,7 +109,7 @@ pub fn run_privileged(ops: &[Operation], dry_run: bool) -> Result<Vec<OpOutcome>
         .spawn()
         .with_context(|| format!("launching elevated helper {}", helper.display()))?;
 
-    let request = Request::new(ops.to_vec(), dry_run);
+    let request = Request::new(ops.to_vec(), dry_run).with_exclude(exclude);
     {
         let mut stdin = child
             .stdin

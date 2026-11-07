@@ -10,12 +10,16 @@
 //!   * `..` components are rejected;
 //!   * nothing happens in dry-run mode.
 
+pub mod policy;
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Category, Finding};
 use crate::{platform, Error, Result};
+
+pub use policy::Policy;
 
 /// A single vetted deletion. Constructing one does not perform it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,9 +52,16 @@ pub struct OpOutcome {
 }
 
 /// Validate a finding and, if it passes, build an [`Operation`]. This is the
-/// only sanctioned way to turn a finding into an operation.
+/// only sanctioned way to turn a finding into an operation. Uses the built-in
+/// protected set only; see [`plan_with`] to also honor user exclusions.
 pub fn plan(finding: &Finding) -> Result<Operation> {
-    validate_path(finding.category, &finding.path)?;
+    plan_with(finding, &Policy::default())
+}
+
+/// Like [`plan`] but checks `path` against `policy` (built-in protected set
+/// plus any user exclusions it carries).
+pub fn plan_with(finding: &Finding, policy: &Policy) -> Result<Operation> {
+    validate_path_with(finding.category, &finding.path, policy)?;
     Ok(Operation {
         category: finding.category,
         path: finding.path.clone(),
@@ -59,11 +70,22 @@ pub fn plan(finding: &Finding) -> Result<Operation> {
     })
 }
 
-/// Re-run every safety check for a path/category pair. Used both when planning
-/// and, crucially, inside the helper before it deletes as root.
+/// Re-run every safety check for a path/category pair against the built-in
+/// protected set only.
 pub fn validate_path(cat: Category, path: &std::path::Path) -> Result<()> {
+    validate_path_with(cat, path, &Policy::default())
+}
+
+/// Re-run every safety check for a path/category pair against `policy`. Used
+/// both when planning and, crucially, inside the helper before it deletes as
+/// root. Checks, in order: absolute path, not protected/excluded, not a
+/// symlink, and contained in an allowlisted root.
+pub fn validate_path_with(cat: Category, path: &std::path::Path, policy: &Policy) -> Result<()> {
     if !path.is_absolute() {
         return Err(Error::PathNotAllowed(path.to_path_buf()));
+    }
+    if policy.is_protected(path) {
+        return Err(Error::ProtectedPath(path.to_path_buf()));
     }
     // Reject symlinks outright (symlink_metadata does not follow).
     match std::fs::symlink_metadata(path) {
@@ -92,10 +114,15 @@ fn current_size(op: &Operation) -> u64 {
     }
 }
 
+/// Execute one operation in-process against the built-in protected set.
+pub fn execute(op: &Operation, dry_run: bool) -> OpOutcome {
+    execute_with(op, dry_run, &Policy::default())
+}
+
 /// Execute one operation in-process. Returns an outcome; never panics.
 /// With `dry_run`, performs all checks but no deletion.
-pub fn execute(op: &Operation, dry_run: bool) -> OpOutcome {
-    if let Err(e) = validate_path(op.category, &op.path) {
+pub fn execute_with(op: &Operation, dry_run: bool, policy: &Policy) -> OpOutcome {
+    if let Err(e) = validate_path_with(op.category, &op.path, policy) {
         return OpOutcome {
             path: op.path.clone(),
             status: OpStatus::Rejected,
@@ -143,11 +170,16 @@ pub fn execute(op: &Operation, dry_run: bool) -> OpOutcome {
     }
 }
 
+/// Execute a batch in-process against the built-in protected set.
+pub fn execute_batch(ops: &[Operation], dry_run: bool) -> Vec<OpOutcome> {
+    execute_batch_with(ops, dry_run, &Policy::default())
+}
+
 /// Execute a batch in-process, returning per-op outcomes. Privileged ops are
 /// *not* elevated here — callers must route `op.privileged` operations to the
 /// helper. This function executes them anyway (they will simply fail with a
 /// permission error if the caller lacks rights), which keeps single-user,
 /// already-root invocations working.
-pub fn execute_batch(ops: &[Operation], dry_run: bool) -> Vec<OpOutcome> {
-    ops.iter().map(|op| execute(op, dry_run)).collect()
+pub fn execute_batch_with(ops: &[Operation], dry_run: bool, policy: &Policy) -> Vec<OpOutcome> {
+    ops.iter().map(|op| execute_with(op, dry_run, policy)).collect()
 }
