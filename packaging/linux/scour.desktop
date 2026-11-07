@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=scour
+GenericName=Disk Cleaner
+Comment=Reclaim space: caches, trash, large/old files and duplicates
+Exec=scour-gui
+Icon=drive-harddisk
+Terminal=false
+Categories=Utility;System;Filesystem;
+Keywords=clean;cache;junk;duplicate;disk;space;trash;

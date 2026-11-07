@@ -14,6 +14,7 @@ and old files, duplicates) are standard OS locations, not proprietary rules.
 | `scour-core` | Engine: scanners, data model, safety-checked operation layer, IPC protocol. No UI, no elevation. |
 | `scour-cli`  | `scour` binary: `scan`, `clean`, `tui` subcommands. |
 | `scour-tui`  | `scour-tui` interactive terminal UI (also launchable via `scour tui`). |
+| `scour-gui`  | `scour-gui` native desktop UI (egui/eframe). |
 | `scour-helperd` | Minimal privileged helper that performs deletions in system locations. |
 
 ## Categories
@@ -60,12 +61,24 @@ scour clean --apply --include-review
 # Interactive terminal UI
 scour tui
 
+# Native desktop GUI
+scour-gui
+
 # Use an explicit config file
 scour --config ./scour.toml scan
 
 # Silence the live scan progress line
 scour scan --no-progress
 ```
+
+## GUI
+
+`scour-gui` is a native desktop front-end (egui/eframe): a category sidebar, a
+checkable list of findings colour-coded by risk, and Scan / Clean / Select-safe
+actions. Scanning runs on a background thread and streams progress to the UI, so
+the window stays responsive. Unprivileged items are removed in-process; items
+needing elevation are reported and left for `scour clean --apply`. On Arch the
+package installs a `.desktop` entry so it appears in the application launcher.
 
 ## Progress reporting
 

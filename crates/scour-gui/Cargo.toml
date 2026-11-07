@@ -1,0 +1,15 @@
+[package]
+name = "scour-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "scour-gui"
+path = "src/main.rs"
+
+[dependencies]
+scour-core = { workspace = true }
+humansize = { workspace = true }
+eframe = "0.28"

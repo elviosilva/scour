@@ -4,6 +4,7 @@ members = [
     "crates/scour-core",
     "crates/scour-cli",
     "crates/scour-tui",
+    "crates/scour-gui",
     "crates/scour-helperd",
 ]
 

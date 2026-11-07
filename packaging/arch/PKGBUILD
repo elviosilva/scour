@@ -5,7 +5,7 @@
 # repo root), so no network source is fetched.
 pkgname=scour
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc="Cross-platform disk cleaner: junk, trash/recycle bin, large/old files, duplicates"
 arch=('x86_64' 'aarch64')
 url="https://example.invalid/scour"
@@ -37,6 +37,11 @@ package() {
     # User-facing binaries.
     install -Dm755 target/release/scour      "$pkgdir/usr/bin/scour"
     install -Dm755 target/release/scour-tui  "$pkgdir/usr/bin/scour-tui"
+    install -Dm755 target/release/scour-gui  "$pkgdir/usr/bin/scour-gui"
+
+    # Desktop entry so the GUI appears in the application launcher.
+    install -Dm644 packaging/linux/scour.desktop \
+        "$pkgdir/usr/share/applications/scour.desktop"
 
     # Privileged helper: installed where the polkit policy authorizes it and
     # where `scour` looks for it. Not in $PATH on purpose.
