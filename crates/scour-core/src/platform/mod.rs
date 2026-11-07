@@ -108,7 +108,9 @@ pub fn junk_roots() -> Vec<CleanupRoot> {
 
 /// Trash / recycle-bin roots whose *contents* are reclaimable.
 pub fn trash_roots() -> Vec<CleanupRoot> {
-    let mut roots = Vec::new();
+    // Explicit type: on Windows no branch pushes (the recycle bin is virtual),
+    // so inference has nothing to go on.
+    let mut roots: Vec<CleanupRoot> = Vec::new();
 
     #[cfg(target_os = "linux")]
     {

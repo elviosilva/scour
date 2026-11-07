@@ -24,7 +24,9 @@ thiserror = "1"
 dirs = "5"
 walkdir = "2"
 jwalk = "0.8"
-blake3 = "1"
+# `pure` disables the C/asm backend so the tree builds on any target without a
+# C toolchain (needed for clean cross-compilation to macOS/Windows).
+blake3 = { version = "1", features = ["pure"] }
 rayon = "1"
 humansize = "2"
 globset = "0.4"
