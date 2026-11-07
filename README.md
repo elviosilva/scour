@@ -19,7 +19,10 @@ and old files, duplicates) are standard OS locations, not proprietary rules.
 ## Categories
 
 - **System junk** — application caches, logs, temporary files (`Safe`).
-- **Trash** — contents of the OS trash / recycle bin (`Safe`).
+- **Trash** — contents of the OS trash / recycle bin (`Safe`). Linux XDG trash
+  (`files` + `info`), macOS `~/.Trash`, and the Windows per-volume
+  `$Recycle.Bin` (both `$R` payload and `$I` metadata; `$I` records are parsed
+  to recover each item's original path for display).
 - **Large & old files** — your own files over a size/age threshold (`Manual`, never auto-selected).
 - **Duplicates** — byte-identical copies found by size → head-sample → BLAKE3 (`Review`).
 
@@ -101,7 +104,8 @@ cargo build --release
 
 ## Status
 
-v1 scope: CLI + TUI; junk, trash, large/old files, duplicates; privilege
-separation wired on Linux. macOS/Windows elevation paths are stubbed with clear
-`cfg` boundaries. Not yet implemented: Windows recycle-bin enumeration, mail /
+v1 scope: CLI + TUI; junk, trash (incl. Windows recycle bin), large/old files,
+duplicates; privilege separation with native elevation on Linux (pkexec/sudo),
+macOS (osascript) and Windows (UAC). The tree type-checks for Linux,
+`x86_64-apple-darwin` and `x86_64-pc-windows-gnu`. Not yet implemented: mail /
 cloud / malware modules.

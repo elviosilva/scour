@@ -139,8 +139,21 @@ pub fn trash_roots() -> Vec<CleanupRoot> {
 
     #[cfg(target_os = "windows")]
     {
-        // The recycle bin is virtual; enumeration is delegated to the `trash`
-        // crate in the trash scanner rather than a filesystem root here.
+        // The recycle bin is a per-volume `$Recycle.Bin` directory holding one
+        // sub-directory per user SID. We add the `$Recycle.Bin` root of every
+        // fixed drive that has one; the scanner walks into the SID dirs the
+        // current user can access. ACLs keep other users' items unreadable.
+        for letter in b'A'..=b'Z' {
+            let p = PathBuf::from(format!("{}:\\$Recycle.Bin", letter as char));
+            if p.is_dir() {
+                roots.push(CleanupRoot {
+                    path: p,
+                    label: "Recycle Bin".into(),
+                    risk: RiskLevel::Safe,
+                    privileged: false,
+                });
+            }
+        }
     }
 
     roots.retain(|r| r.path.is_absolute());

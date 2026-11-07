@@ -4,6 +4,7 @@
 pub mod dupes;
 pub mod junk;
 pub mod large;
+pub mod recycle;
 pub mod trash;
 
 use std::path::Path;

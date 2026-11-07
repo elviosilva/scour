@@ -1,11 +1,15 @@
 //! Trash scanner.
 //!
-//! On Linux and macOS the trash is a real directory tree whose contents we
-//! enumerate directly. On Windows the recycle bin is virtual; for v1 we leave
-//! Windows trash enumeration to a follow-up (it needs the Shell API or the
-//! `trash` crate's listing support) and emit nothing rather than guess.
+//! * **Linux** — XDG trash: `<Trash>/files` holds the payload and `<Trash>/info`
+//!   the restore metadata; both are surfaced so emptying is complete.
+//! * **macOS** — `~/.Trash` holds items directly.
+//! * **Windows** — each volume's `$Recycle.Bin\<SID>` holds `$R*` payload files
+//!   and paired `$I*` metadata records. Both are surfaced; the original path
+//!   from the `$I` record (when readable) is used to label the matching `$R`.
 
-use crate::model::{Category, Finding, ScanReport};
+use std::path::{Path, PathBuf};
+
+use crate::model::{Category, Finding, RiskLevel, ScanReport};
 use crate::platform;
 use crate::scan::{dir_size, ScanOptions};
 
@@ -13,52 +17,8 @@ pub fn scan(opts: &ScanOptions) -> ScanReport {
     let mut report = ScanReport::default();
 
     for root in platform::trash_roots() {
-        // On Linux the deletable payload lives in `<Trash>/files`; `info/` holds
-        // restore metadata. We surface both so emptying is complete.
-        let targets = linux_trash_subdirs(&root.path);
-
-        for dir in targets {
-            let entries = match std::fs::read_dir(&dir) {
-                Ok(e) => e,
-                Err(e) => {
-                    if e.kind() != std::io::ErrorKind::NotFound {
-                        report.warnings.push(format!("{}: {}", dir.display(), e));
-                    }
-                    continue;
-                }
-            };
-
-            for entry in entries.flatten() {
-                let path = entry.path();
-                // DirEntry::metadata() does not traverse symlinks.
-                let Ok(meta) = entry.metadata() else { continue };
-
-                let (size, modified, is_dir) = if meta.is_dir() {
-                    let (s, m) = dir_size(&path, false);
-                    (s, m, true)
-                } else {
-                    (meta.len(), meta.modified().ok(), false)
-                };
-
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("item")
-                    .to_string();
-
-                report.findings.push(Finding {
-                    id: 0,
-                    category: Category::Trash,
-                    path,
-                    size,
-                    is_dir,
-                    risk: root.risk,
-                    modified,
-                    label: format!("Trash — {name}"),
-                    group: None,
-                    requires_privilege: false,
-                });
-            }
+        for dir in item_dirs(&root.path) {
+            scan_dir(&dir, root.risk, &mut report);
         }
     }
 
@@ -66,13 +26,98 @@ pub fn scan(opts: &ScanOptions) -> ScanReport {
     report
 }
 
+fn scan_dir(dir: &Path, risk: RiskLevel, report: &mut ScanReport) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            // Missing or access-denied (other users' SID dirs) are expected.
+            if !matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+            ) {
+                report.warnings.push(format!("{}: {}", dir.display(), e));
+            }
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // DirEntry::metadata() does not traverse symlinks.
+        let Ok(meta) = entry.metadata() else { continue };
+
+        let (size, modified, is_dir) = if meta.is_dir() {
+            let (s, m) = dir_size(&path, false);
+            (s, m, true)
+        } else {
+            (meta.len(), meta.modified().ok(), false)
+        };
+
+        report.findings.push(Finding {
+            id: 0,
+            category: Category::Trash,
+            path: path.clone(),
+            size,
+            is_dir,
+            risk,
+            modified,
+            label: label_for(&path),
+            group: None,
+            requires_privilege: false,
+        });
+    }
+}
+
+/// The directories whose entries are reclaimable for a given trash root.
 #[cfg(target_os = "linux")]
-fn linux_trash_subdirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+fn item_dirs(root: &Path) -> Vec<PathBuf> {
     vec![root.join("files"), root.join("info")]
 }
 
-#[cfg(not(target_os = "linux"))]
-fn linux_trash_subdirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
-    // macOS ~/.Trash holds items directly.
+/// On Windows the trash root is `$Recycle.Bin`; its per-SID sub-directories hold
+/// the actual items.
+#[cfg(target_os = "windows")]
+fn item_dirs(root: &Path) -> Vec<PathBuf> {
+    match std::fs::read_dir(root) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn item_dirs(root: &Path) -> Vec<PathBuf> {
     vec![root.to_path_buf()]
+}
+
+/// Build a human label for a trashed entry.
+#[cfg(target_os = "windows")]
+fn label_for(path: &Path) -> String {
+    use crate::scan::recycle;
+
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("item");
+    // For a `$R` payload, the paired `$I` record carries the original path.
+    if let Some(rest) = name.strip_prefix("$R") {
+        let i_name = format!("$I{rest}");
+        if let Some(parent) = path.parent() {
+            if let Ok(bytes) = std::fs::read(parent.join(&i_name)) {
+                if let Some(meta) = recycle::parse_i_file(&bytes) {
+                    return format!("Recycle Bin — {}", meta.original_path);
+                }
+            }
+        }
+    }
+    format!("Recycle Bin — {name}")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn label_for(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("item");
+    format!("Trash — {name}")
 }
