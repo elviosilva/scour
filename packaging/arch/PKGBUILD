@@ -1,0 +1,55 @@
+# Maintainer: scour contributors
+#
+# Local build: run `makepkg -si` from this directory inside a checkout of the
+# repository. The package is built from the working tree two levels up (the
+# repo root), so no network source is fetched.
+pkgname=scour
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Cross-platform disk cleaner: junk, trash/recycle bin, large/old files, duplicates"
+arch=('x86_64' 'aarch64')
+url="https://example.invalid/scour"
+license=('MIT')
+depends=('polkit')
+makedepends=('cargo')
+# The workspace profile already configures lto/strip; don't let makepkg fight it.
+options=('!lto')
+
+# Repo root relative to this PKGBUILD (packaging/arch/PKGBUILD -> repo root).
+_repo="$startdir/../.."
+
+build() {
+    cd "$_repo"
+    export CARGO_TARGET_DIR="$_repo/target"
+    cargo build --release --locked --workspace
+}
+
+check() {
+    cd "$_repo"
+    export CARGO_TARGET_DIR="$_repo/target"
+    # Fast unit tests only; the integration suite walks $HOME and is slow.
+    cargo test --release --locked -p scour-core --lib -p scour-cli
+}
+
+package() {
+    cd "$_repo"
+
+    # User-facing binaries.
+    install -Dm755 target/release/scour      "$pkgdir/usr/bin/scour"
+    install -Dm755 target/release/scour-tui  "$pkgdir/usr/bin/scour-tui"
+
+    # Privileged helper: installed where the polkit policy authorizes it and
+    # where `scour` looks for it. Not in $PATH on purpose.
+    install -Dm755 target/release/scour-helperd \
+        "$pkgdir/usr/lib/scour/scour-helperd"
+
+    # Polkit action for GUI-authenticated system cleanups.
+    install -Dm644 packaging/linux/com.scour.helper.policy \
+        "$pkgdir/usr/share/polkit-1/actions/com.scour.helper.policy"
+
+    # Docs, example config, license.
+    install -Dm644 packaging/scour.example.toml \
+        "$pkgdir/usr/share/doc/scour/scour.example.toml"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/scour/README.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/scour/LICENSE"
+}

@@ -115,6 +115,30 @@ cargo build --release
 # binaries in target/release/: scour, scour-tui, scour-helperd
 ```
 
+## Packaging (Arch / Omarchy)
+
+A PKGBUILD is provided in [`packaging/arch`](packaging/arch/PKGBUILD). From a
+checkout:
+
+```bash
+cd packaging/arch
+makepkg -si
+```
+
+It builds the workspace and installs:
+
+| File | Destination |
+|------|-------------|
+| `scour`, `scour-tui` | `/usr/bin/` |
+| `scour-helperd` | `/usr/lib/scour/` (not in `$PATH`; where the policy authorizes it) |
+| polkit action | `/usr/share/polkit-1/actions/com.scour.helper.policy` |
+| example config, README, LICENSE | `/usr/share/{doc,licenses}/scour/` |
+
+With the policy installed, cleaning a system location raises polkit's GUI
+authentication dialog (`pkexec`) with a scour-specific prompt, instead of the
+generic one. `scour` locates the helper next to its own binary first, then at
+`/usr/lib/scour/scour-helperd`, so both dev and packaged layouts work.
+
 ## Status
 
 v1 scope: CLI + TUI; junk, trash (incl. Windows recycle bin), large/old files,

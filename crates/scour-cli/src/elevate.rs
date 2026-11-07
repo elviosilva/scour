@@ -22,27 +22,46 @@ use anyhow::{anyhow, Context, Result};
 use scour_core::ipc::{Request, Response};
 use scour_core::ops::{OpOutcome, Operation};
 
-/// Find `scour-helperd` next to the current executable.
+/// Locate `scour-helperd`. Checked in order:
+///   1. next to the current executable (dev builds, bundled app layouts);
+///   2. the canonical system install dir on unix (`/usr/lib/scour`), which is
+///      the path the polkit policy authorizes, then `/usr/libexec/scour`.
+///
+/// The path that is found is the exact one passed to `pkexec`, so it must match
+/// the policy's `org.freedesktop.policykit.exec.path` for the custom action to
+/// apply (otherwise pkexec falls back to its generic prompt).
 fn helper_path() -> Result<PathBuf> {
-    let exe = std::env::current_exe().context("resolving current executable")?;
-    let dir = exe
-        .parent()
-        .ok_or_else(|| anyhow!("executable has no parent directory"))?;
     let name = if cfg!(windows) {
         "scour-helperd.exe"
     } else {
         "scour-helperd"
     };
-    let candidate = dir.join(name);
-    if candidate.exists() {
-        Ok(candidate)
-    } else {
-        Err(anyhow!(
-            "privileged helper not found next to {} (looked for {})",
-            exe.display(),
-            candidate.display()
-        ))
+
+    let exe = std::env::current_exe().context("resolving current executable")?;
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = exe.parent() {
+        candidates.push(dir.join(name));
     }
+    #[cfg(unix)]
+    {
+        candidates.push(PathBuf::from("/usr/lib/scour").join(name));
+        candidates.push(PathBuf::from("/usr/libexec/scour").join(name));
+    }
+
+    candidates
+        .iter()
+        .find(|p| p.exists())
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!(
+                "privileged helper `{name}` not found (looked in: {})",
+                candidates
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
 }
 
 /// Run a batch of privileged operations through the elevated helper. `exclude`
