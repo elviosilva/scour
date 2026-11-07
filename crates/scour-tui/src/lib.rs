@@ -6,9 +6,9 @@
 //! items only — privileged ones are flagged to run via the CLI); `q` quits.
 
 use std::collections::BTreeSet;
-use std::io::{self, Stdout};
+use std::io::{self, IsTerminal, Stdout};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -22,7 +22,16 @@ use scour_core::model::{Category, FindingId, RiskLevel, ScanReport};
 use scour_core::ops::{self, OpStatus};
 
 /// Entry point: take over the terminal, run the UI loop, and restore on exit.
+///
+/// Requires an interactive terminal on both stdin and stdout; without one it
+/// returns a clear error instead of failing deep inside the terminal backend.
 pub fn run(report: ScanReport) -> Result<()> {
+    if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
+        bail!(
+            "the interactive UI needs a terminal (stdin and stdout must be a TTY). \
+             Use the `scour` CLI for non-interactive use, e.g. `scour scan`."
+        );
+    }
     let mut terminal = setup_terminal()?;
     let mut app = App::new(report);
     let result = app.run(&mut terminal);
