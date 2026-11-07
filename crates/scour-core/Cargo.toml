@@ -1,0 +1,21 @@
+[package]
+name = "scour-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+dirs = { workspace = true }
+jwalk = { workspace = true }
+walkdir = { workspace = true }
+blake3 = { workspace = true }
+rayon = { workspace = true }
+humansize = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

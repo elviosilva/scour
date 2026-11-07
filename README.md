@@ -1,0 +1,87 @@
+# scour
+
+A cross-platform disk cleaner (Linux / macOS / Windows) written in Rust.
+
+`scour` scans for reclaimable files, groups them into categories, and removes
+the ones you select. It is an original tool — not a port or clone of any
+commercial product — and the cleanup targets (caches, logs, temp, trash, large
+and old files, duplicates) are standard OS locations, not proprietary rules.
+
+## Workspace layout
+
+| Crate | What it is |
+|-------|------------|
+| `scour-core` | Engine: scanners, data model, safety-checked operation layer, IPC protocol. No UI, no elevation. |
+| `scour-cli`  | `scour` binary: `scan`, `clean`, `tui` subcommands. |
+| `scour-tui`  | `scour-tui` interactive terminal UI (also launchable via `scour tui`). |
+| `scour-helperd` | Minimal privileged helper that performs deletions in system locations. |
+
+## Categories
+
+- **System junk** — application caches, logs, temporary files (`Safe`).
+- **Trash** — contents of the OS trash / recycle bin (`Safe`).
+- **Large & old files** — your own files over a size/age threshold (`Manual`, never auto-selected).
+- **Duplicates** — byte-identical copies found by size → head-sample → BLAKE3 (`Review`).
+
+## Safety model
+
+1. Scanners may only surface paths inside an **allowlisted root** for their
+   category (`scour-core::platform`).
+2. The operation layer re-validates every path before deleting: it must be
+   absolute, contained in an allowlisted root, contain no `..`, and must not be
+   a symlink.
+3. The **privileged helper independently re-runs the same checks** before
+   deleting as root — it trusts nothing from the caller and can only perform
+   deletions the policy already permits. It never executes arbitrary commands.
+4. `clean` is **dry-run by default**; `--apply` plus a confirmation is required
+   to delete.
+
+## Usage
+
+```bash
+# Scan everything and print a report (never deletes)
+scour scan
+
+# Scan only junk and trash, as JSON
+scour scan junk trash --json
+
+# Dry-run clean of safe items
+scour clean
+
+# Actually delete safe items (prompts for confirmation)
+scour clean --apply
+
+# Include duplicates/old files too
+scour clean --apply --include-review
+
+# Interactive terminal UI
+scour tui
+```
+
+## Privilege separation
+
+Deletions in user-owned locations run in-process, unprivileged. Deletions in
+system locations (e.g. `/Library/Caches` on macOS) are routed to
+`scour-helperd`, launched elevated:
+
+- **Linux** — via `pkexec` (polkit); falls back to `sudo`. Install
+  `packaging/linux/com.scour.helper.policy` into `/usr/share/polkit-1/actions/`
+  for a GUI auth prompt.
+- **macOS** — via `sudo` in v1; a production build would register a launchd
+  helper with `SMAppService`.
+- **Windows** — assumes an already-elevated process in v1; a production build
+  would relaunch with `ShellExecute "runas"`.
+
+## Building
+
+```bash
+cargo build --release
+# binaries in target/release/: scour, scour-tui, scour-helperd
+```
+
+## Status
+
+v1 scope: CLI + TUI; junk, trash, large/old files, duplicates; privilege
+separation wired on Linux. macOS/Windows elevation paths are stubbed with clear
+`cfg` boundaries. Not yet implemented: Windows recycle-bin enumeration, mail /
+cloud / malware modules.

@@ -1,0 +1,10 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+
+# Backtrace / debug
+*.pdb
+
+# Editor / OS cruft
+.DS_Store
+*.swp

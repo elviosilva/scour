@@ -1,0 +1,21 @@
+[package]
+name = "scour-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "scour_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "scour-tui"
+path = "src/main.rs"
+
+[dependencies]
+scour-core = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+humansize = { workspace = true }
+anyhow = { workspace = true }
