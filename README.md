@@ -62,7 +62,20 @@ scour tui
 
 # Use an explicit config file
 scour --config ./scour.toml scan
+
+# Silence the live scan progress line
+scour scan --no-progress
 ```
+
+## Progress reporting
+
+Scanning a full home directory (large/old files, duplicates) can take a while,
+so scanners emit `ProgressEvent`s consumed by the front-end. On a terminal, the
+CLI shows a single self-overwriting status line on stderr (category, entries,
+bytes, current path); when stderr is not a TTY it prints one concise line per
+category instead, and `--json` disables progress so stdout stays machine-clean.
+`--no-progress` turns it off entirely. The engine API is `scan_all_with_progress`
+with any `Progress` sink; `scan_all` uses a no-op sink.
 
 ## Configuration
 

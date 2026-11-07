@@ -6,9 +6,9 @@
 
 use crate::model::{Category, Finding, ScanReport};
 use crate::platform;
-use crate::scan::{dir_size, ScanOptions};
+use crate::scan::{dir_size, Progress, ScanOptions};
 
-pub fn scan(opts: &ScanOptions) -> ScanReport {
+pub fn scan(opts: &ScanOptions, _progress: &dyn Progress) -> ScanReport {
     let mut report = ScanReport::default();
 
     for root in platform::roots_for(Category::Junk) {

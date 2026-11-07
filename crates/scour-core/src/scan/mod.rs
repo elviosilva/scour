@@ -7,10 +7,50 @@ pub mod large;
 pub mod recycle;
 pub mod trash;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::model::ScanReport;
+use crate::model::{Category, ScanReport};
+
+/// Progress events emitted while scanning. A `Tick` is throttled at the source
+/// (every few thousand entries) so sinks stay cheap.
+#[derive(Debug, Clone)]
+pub enum ProgressEvent {
+    /// A category's scan has begun.
+    Started(Category),
+    /// Periodic update while walking: entries/bytes seen so far and the path
+    /// currently under the cursor.
+    Tick {
+        category: Category,
+        entries: u64,
+        bytes: u64,
+        current: Option<PathBuf>,
+    },
+    /// Informational note (e.g. "hashing 42 candidate files").
+    Note { category: Category, message: String },
+    /// A category's scan has finished.
+    Finished {
+        category: Category,
+        findings: usize,
+        bytes: u64,
+    },
+}
+
+/// A sink for [`ProgressEvent`]s. Must be `Sync` because the duplicate scanner
+/// hashes files in parallel with rayon and reports from worker threads.
+pub trait Progress: Sync {
+    fn event(&self, ev: ProgressEvent);
+}
+
+/// A no-op sink for callers that don't want progress.
+pub struct NoProgress;
+
+impl Progress for NoProgress {
+    fn event(&self, _ev: ProgressEvent) {}
+}
+
+/// How many walked entries between throttled `Tick`s.
+pub(crate) const TICK_EVERY: u64 = 2048;
 
 /// Options that tune the scanners.
 #[derive(Debug, Clone)]
@@ -38,17 +78,32 @@ impl Default for ScanOptions {
 }
 
 /// Run every scanner for the requested categories and return one merged,
-/// renumbered report.
-pub fn scan_all(categories: &[crate::model::Category], opts: &ScanOptions) -> ScanReport {
-    use crate::model::Category::*;
+/// renumbered report. No progress reporting.
+pub fn scan_all(categories: &[Category], opts: &ScanOptions) -> ScanReport {
+    scan_all_with_progress(categories, opts, &NoProgress)
+}
+
+/// Like [`scan_all`] but reports [`ProgressEvent`]s to `progress`.
+pub fn scan_all_with_progress(
+    categories: &[Category],
+    opts: &ScanOptions,
+    progress: &dyn Progress,
+) -> ScanReport {
+    use Category::*;
     let mut report = ScanReport::default();
     for &cat in categories {
+        progress.event(ProgressEvent::Started(cat));
         let r = match cat {
-            Junk => junk::scan(opts),
-            Trash => trash::scan(opts),
-            LargeFiles => large::scan(opts),
-            Duplicates => dupes::scan(opts),
+            Junk => junk::scan(opts, progress),
+            Trash => trash::scan(opts, progress),
+            LargeFiles => large::scan(opts, progress),
+            Duplicates => dupes::scan(opts, progress),
         };
+        progress.event(ProgressEvent::Finished {
+            category: cat,
+            findings: r.findings.len(),
+            bytes: r.total_size(),
+        });
         report.merge(r);
     }
     report.renumber();

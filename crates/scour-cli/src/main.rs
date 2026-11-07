@@ -1,6 +1,7 @@
 //! scour — cross-platform disk cleaner (CLI front-end).
 
 mod elevate;
+mod progress;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -17,6 +18,9 @@ struct Cli {
     /// Path to a scour.toml config (defaults to <config-dir>/scour/scour.toml).
     #[arg(long, global = true)]
     config: Option<std::path::PathBuf>,
+    /// Suppress the live scan progress line on stderr.
+    #[arg(long, global = true)]
+    no_progress: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -103,9 +107,13 @@ fn main() -> Result<()> {
     };
     apply_allow_roots(&config);
 
+    // JSON output must stay machine-clean, so progress is disabled for it.
+    let want_progress = !cli.no_progress;
+
     match cli.command {
         Commands::Scan { categories, json } => {
-            cmd_scan(&resolve_categories(&categories), json, &config)
+            let sink = progress::sink(want_progress && !json);
+            cmd_scan(&resolve_categories(&categories), json, &config, sink.as_ref())
         }
         Commands::Clean {
             categories,
@@ -113,16 +121,25 @@ fn main() -> Result<()> {
             include_review,
             include_manual,
             yes,
-        } => cmd_clean(
-            &resolve_categories(&categories),
-            apply,
-            include_review,
-            include_manual,
-            yes,
-            &config,
-        ),
+        } => {
+            let sink = progress::sink(want_progress);
+            cmd_clean(
+                &resolve_categories(&categories),
+                apply,
+                include_review,
+                include_manual,
+                yes,
+                &config,
+                sink.as_ref(),
+            )
+        }
         Commands::Tui { categories } => {
-            let report = scan::scan_all(&resolve_categories(&categories), &config.scan_options());
+            let sink = progress::sink(want_progress);
+            let report = scan::scan_all_with_progress(
+                &resolve_categories(&categories),
+                &config.scan_options(),
+                sink.as_ref(),
+            );
             scour_tui::run(report)?;
             Ok(())
         }
@@ -144,8 +161,13 @@ fn apply_allow_roots(config: &Config) {
     }
 }
 
-fn cmd_scan(categories: &[Category], json: bool, config: &Config) -> Result<()> {
-    let report = scan::scan_all(categories, &config.scan_options());
+fn cmd_scan(
+    categories: &[Category],
+    json: bool,
+    config: &Config,
+    progress: &dyn scan::Progress,
+) -> Result<()> {
+    let report = scan::scan_all_with_progress(categories, &config.scan_options(), progress);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -210,8 +232,9 @@ fn cmd_clean(
     include_manual: bool,
     yes: bool,
     config: &Config,
+    progress: &dyn scan::Progress,
 ) -> Result<()> {
-    let report = scan::scan_all(categories, &config.scan_options());
+    let report = scan::scan_all_with_progress(categories, &config.scan_options(), progress);
 
     // Build the deletion policy from the user's exclusions (built-in protected
     // paths are always included).

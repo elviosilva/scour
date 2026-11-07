@@ -18,7 +18,7 @@ use rayon::prelude::*;
 
 use crate::model::{Category, Finding, RiskLevel, ScanReport};
 use crate::platform;
-use crate::scan::ScanOptions;
+use crate::scan::{Progress, ProgressEvent, ScanOptions, TICK_EVERY};
 
 const HEAD_SAMPLE: usize = 16 * 1024;
 
@@ -28,17 +28,30 @@ struct Candidate {
     modified: Option<SystemTime>,
 }
 
-pub fn scan(opts: &ScanOptions) -> ScanReport {
+pub fn scan(opts: &ScanOptions, progress: &dyn Progress) -> ScanReport {
     let mut report = ScanReport::default();
 
     // 1. Collect candidates grouped by size.
     let mut by_size: HashMap<u64, Vec<Candidate>> = HashMap::new();
+    let mut entries_seen: u64 = 0;
+    let mut bytes_seen: u64 = 0;
     for root in platform::roots_for(Category::Duplicates) {
         for entry in jwalk::WalkDir::new(&root.path)
             .follow_links(opts.follow_symlinks)
             .skip_hidden(false)
         {
             let Ok(entry) = entry else { continue };
+
+            entries_seen += 1;
+            if entries_seen % TICK_EVERY == 0 {
+                progress.event(ProgressEvent::Tick {
+                    category: Category::Duplicates,
+                    entries: entries_seen,
+                    bytes: bytes_seen,
+                    current: Some(entry.path()),
+                });
+            }
+
             let Ok(meta) = entry.metadata() else { continue };
             if !meta.is_file() || meta.file_type().is_symlink() {
                 continue;
@@ -47,6 +60,7 @@ pub fn scan(opts: &ScanOptions) -> ScanReport {
             if size < opts.dupe_min_size {
                 continue;
             }
+            bytes_seen += size;
             by_size.entry(size).or_default().push(Candidate {
                 path: entry.path(),
                 size,
@@ -58,6 +72,14 @@ pub fn scan(opts: &ScanOptions) -> ScanReport {
     // Keep only sizes with more than one file.
     let size_groups: Vec<Vec<Candidate>> =
         by_size.into_values().filter(|v| v.len() > 1).collect();
+
+    let candidate_count: usize = size_groups.iter().map(|g| g.len()).sum();
+    if candidate_count > 0 {
+        progress.event(ProgressEvent::Note {
+            category: Category::Duplicates,
+            message: format!("hashing {candidate_count} size-matched candidates"),
+        });
+    }
 
     // 2 + 3. Refine each size group by head sample, then full hash.
     for group in size_groups {
