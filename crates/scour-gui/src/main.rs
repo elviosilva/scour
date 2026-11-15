@@ -335,7 +335,9 @@ impl eframe::App for ScourApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_messages();
         if self.scanning {
-            ctx.request_repaint(); // keep the progress bar animating
+            // Animate at ~10 fps while scanning instead of an uncapped repaint
+            // loop that would peg a core on its own.
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
         self.top_bar(ctx);
@@ -562,22 +564,19 @@ impl ScourApp {
             });
             ui.add_space(8.0);
 
-            // Snapshot to avoid borrowing self.report while mutating selection.
-            let rows: Vec<(FindingId, u64, bool, RiskLevel, String)> = self
+            // Indices of findings in the focused category — cheap to rebuild
+            // each frame (no per-frame string allocation), unlike cloning every
+            // path. Paths are formatted only for the rows actually visible.
+            let indices: Vec<usize> = self
                 .report
-                .by_category(self.focused)
-                .map(|f| {
-                    (
-                        f.id,
-                        f.size,
-                        f.requires_privilege,
-                        f.risk,
-                        f.path.display().to_string(),
-                    )
-                })
+                .findings
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.category == self.focused)
+                .map(|(i, _)| i)
                 .collect();
 
-            if rows.is_empty() {
+            if indices.is_empty() {
                 ui.add_space(24.0);
                 ui.vertical_centered(|ui| {
                     ui.label(
@@ -594,25 +593,33 @@ impl ScourApp {
                 return;
             }
 
+            let row_height = 28.0;
             egui::Frame::none()
                 .fill(palette::CARD)
                 .rounding(Rounding::same(10.0))
                 .inner_margin(Margin::same(6.0))
                 .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    // Virtualized: only the visible rows are built each frame, so
+                    // a list of tens of thousands of findings stays smooth.
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            for (i, (id, size, privileged, risk, path)) in
-                                rows.into_iter().enumerate()
-                            {
-                                let row_fill = if i % 2 == 0 {
+                        .show_rows(ui, row_height, indices.len(), |ui, range| {
+                            for vi in range {
+                                let f = &self.report.findings[indices[vi]];
+                                let id = f.id;
+                                let size = f.size;
+                                let privileged = f.requires_privilege;
+                                let risk = f.risk;
+                                let path = f.path.display().to_string();
+
+                                let row_fill = if vi % 2 == 0 {
                                     palette::CARD
                                 } else {
                                     palette::CARD_HOVER.linear_multiply(0.5)
                                 };
                                 egui::Frame::none()
                                     .fill(row_fill)
-                                    .rounding(Rounding::same(5.0))
                                     .inner_margin(Margin::symmetric(8.0, 5.0))
                                     .show(ui, |ui| {
                                         ui.set_width(ui.available_width());

@@ -15,10 +15,7 @@ pub fn scan(opts: &ScanOptions, progress: &dyn Progress) -> ScanReport {
     let mut bytes_seen: u64 = 0;
 
     for root in platform::roots_for(Category::LargeFiles) {
-        for entry in jwalk::WalkDir::new(&root.path)
-            .follow_links(opts.follow_symlinks)
-            .skip_hidden(false)
-        {
+        for entry in crate::scan::pruned_walk(&root.path, opts.follow_symlinks) {
             let entry = match entry {
                 Ok(e) => e,
                 Err(_) => continue,

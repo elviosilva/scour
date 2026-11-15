@@ -110,6 +110,64 @@ pub fn scan_all_with_progress(
     report
 }
 
+/// Directories that the "large files" and "duplicate" walks skip entirely.
+/// These hold regenerable build output, package/dependency caches, or VCS data:
+/// hashing gigabytes of them would saturate the machine for no useful result
+/// (caches are already covered by the junk scanner, and build output is
+/// reproducible). Pruning them at the directory level keeps a whole-home scan
+/// from reading tens of gigabytes.
+pub(crate) fn is_heavy_dir(name: &str) -> bool {
+    matches!(
+        name,
+        // Dependency / build output
+        "node_modules"
+            | "target"
+            | "build"
+            | "dist"
+            | ".next"
+            | ".nuxt"
+            | ".gradle"
+            | ".tox"
+            // Language / tool caches
+            | ".cache"
+            | ".cargo"
+            | ".rustup"
+            | ".npm"
+            | ".pnpm-store"
+            | ".yarn"
+            | ".venv"
+            | "venv"
+            | "__pycache__"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".ruff_cache"
+            // VCS and large app stores
+            | ".git"
+            | ".svn"
+            | ".hg"
+            | "snap"
+            | ".steam"
+    )
+}
+
+/// A `jwalk::WalkDir` configured for heavy content scans: it prunes
+/// [`is_heavy_dir`] sub-trees up front so they are never descended into.
+pub(crate) fn pruned_walk(root: &Path, follow_symlinks: bool) -> jwalk::WalkDir {
+    jwalk::WalkDir::new(root)
+        .follow_links(follow_symlinks)
+        .skip_hidden(false)
+        .process_read_dir(|_depth, _path, _state, children| {
+            children.retain(|entry| match entry {
+                Ok(e) => {
+                    let is_dir = e.file_type().is_dir();
+                    let name = e.file_name().to_string_lossy();
+                    !(is_dir && is_heavy_dir(&name))
+                }
+                Err(_) => true,
+            });
+        })
+}
+
 /// Recursively sum the size of a directory's regular files, skipping symlinks.
 /// Returns `(bytes, newest_mtime)`.
 pub(crate) fn dir_size(path: &Path, follow_symlinks: bool) -> (u64, Option<SystemTime>) {

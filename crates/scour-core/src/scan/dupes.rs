@@ -36,10 +36,7 @@ pub fn scan(opts: &ScanOptions, progress: &dyn Progress) -> ScanReport {
     let mut entries_seen: u64 = 0;
     let mut bytes_seen: u64 = 0;
     for root in platform::roots_for(Category::Duplicates) {
-        for entry in jwalk::WalkDir::new(&root.path)
-            .follow_links(opts.follow_symlinks)
-            .skip_hidden(false)
-        {
+        for entry in crate::scan::pruned_walk(&root.path, opts.follow_symlinks) {
             let Ok(entry) = entry else { continue };
 
             entries_seen += 1;
@@ -81,6 +78,16 @@ pub fn scan(opts: &ScanOptions, progress: &dyn Progress) -> ScanReport {
         });
     }
 
+    // Hash on a bounded pool: at most half the cores (min 1), so a whole-home
+    // scan leaves headroom for the UI/compositor instead of pegging every core.
+    let threads = std::thread::available_parallelism()
+        .map(|n| (n.get() / 2).max(1))
+        .unwrap_or(1);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .ok();
+
     // 2 + 3. Refine each size group by head sample, then full hash.
     for group in size_groups {
         let mut by_head: HashMap<[u8; 32], Vec<Candidate>> = HashMap::new();
@@ -92,11 +99,18 @@ pub fn scan(opts: &ScanOptions, progress: &dyn Progress) -> ScanReport {
         }
 
         for head_group in by_head.into_values().filter(|v| v.len() > 1) {
-            // Full-hash in parallel.
-            let hashed: Vec<(Candidate, [u8; 32])> = head_group
-                .into_par_iter()
-                .filter_map(|c| full_hash(&c.path).ok().map(|h| (c, h)))
-                .collect();
+            // Full-hash in parallel on the bounded pool (falling back to the
+            // global pool only if building ours failed).
+            let hash_batch = || {
+                head_group
+                    .into_par_iter()
+                    .filter_map(|c| full_hash(&c.path).ok().map(|h| (c, h)))
+                    .collect::<Vec<(Candidate, [u8; 32])>>()
+            };
+            let hashed: Vec<(Candidate, [u8; 32])> = match &pool {
+                Some(pool) => pool.install(hash_batch),
+                None => hash_batch(),
+            };
 
             let mut by_full: HashMap<[u8; 32], Vec<Candidate>> = HashMap::new();
             for (c, h) in hashed {
