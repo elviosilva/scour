@@ -19,24 +19,113 @@ use std::thread;
 use eframe::egui;
 use humansize::{format_size, BINARY};
 
+use eframe::egui::{Color32, Margin, RichText, Rounding, Stroke};
 use scour_core::config::Config;
 use scour_core::model::{Category, FindingId, RiskLevel, ScanReport};
 use scour_core::ops::{self, OpStatus, Policy};
 use scour_core::scan::{self, Progress, ProgressEvent};
 
+/// Colour palette — a calm dark theme with a teal "clean" accent.
+mod palette {
+    use eframe::egui::Color32;
+    pub const BG: Color32 = Color32::from_rgb(0x15, 0x17, 0x1C); // window / central
+    pub const PANEL: Color32 = Color32::from_rgb(0x1B, 0x1E, 0x24); // side/top panels
+    pub const CARD: Color32 = Color32::from_rgb(0x22, 0x26, 0x2E); // list / cards
+    pub const CARD_HOVER: Color32 = Color32::from_rgb(0x2A, 0x2F, 0x39);
+    pub const STROKE: Color32 = Color32::from_rgb(0x30, 0x36, 0x41);
+    pub const INK: Color32 = Color32::from_rgb(0xE7, 0xE9, 0xEC); // primary text
+    pub const MUTED: Color32 = Color32::from_rgb(0x97, 0xA0, 0xAD); // secondary text
+    pub const ACCENT: Color32 = Color32::from_rgb(0x2D, 0xD4, 0xBF); // teal
+    pub const ON_ACCENT: Color32 = Color32::from_rgb(0x08, 0x1A, 0x18); // text on accent
+    pub const REVIEW: Color32 = Color32::from_rgb(0xEA, 0xB3, 0x08); // amber
+    pub const MANUAL: Color32 = Color32::from_rgb(0xEF, 0x6B, 0x6B); // red
+    pub const BLUE: Color32 = Color32::from_rgb(0x60, 0xA5, 0xFA);
+    pub const PURPLE: Color32 = Color32::from_rgb(0xA7, 0x8B, 0xFA);
+}
+
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 620.0])
-            .with_min_inner_size([640.0, 420.0])
+            .with_inner_size([980.0, 660.0])
+            .with_min_inner_size([680.0, 440.0])
             .with_title("scour"),
         ..Default::default()
     };
     eframe::run_native(
         "scour",
         options,
-        Box::new(|_cc| Ok(Box::new(ScourApp::new()))),
+        Box::new(|cc| {
+            install_theme(&cc.egui_ctx);
+            Ok(Box::new(ScourApp::new()))
+        }),
     )
+}
+
+/// Apply the custom dark theme: colours, rounding and spacing.
+fn install_theme(ctx: &egui::Context) {
+    use palette::*;
+    let mut style = (*ctx.style()).clone();
+    let v = &mut style.visuals;
+
+    v.dark_mode = true;
+    v.panel_fill = PANEL;
+    v.window_fill = PANEL;
+    v.extreme_bg_color = BG;
+    v.faint_bg_color = CARD;
+    v.override_text_color = Some(INK);
+    v.hyperlink_color = ACCENT;
+    v.window_rounding = Rounding::same(12.0);
+    v.window_stroke = Stroke::new(1.0_f32, STROKE);
+    v.selection.bg_fill = ACCENT.linear_multiply(0.35);
+    v.selection.stroke = Stroke::new(1.0_f32, ACCENT);
+
+    let rounding = Rounding::same(7.0);
+    v.widgets.noninteractive.bg_fill = PANEL;
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, MUTED);
+
+    v.widgets.inactive.bg_fill = CARD;
+    v.widgets.inactive.weak_bg_fill = CARD;
+    v.widgets.inactive.rounding = rounding;
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, INK);
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, STROKE);
+
+    v.widgets.hovered.bg_fill = CARD_HOVER;
+    v.widgets.hovered.weak_bg_fill = CARD_HOVER;
+    v.widgets.hovered.rounding = rounding;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT.linear_multiply(0.6));
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, INK);
+
+    v.widgets.active.bg_fill = ACCENT;
+    v.widgets.active.weak_bg_fill = ACCENT;
+    v.widgets.active.rounding = rounding;
+    v.widgets.active.fg_stroke = Stroke::new(1.0_f32, ON_ACCENT);
+
+    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+    style.spacing.button_padding = egui::vec2(12.0, 7.0);
+    style.spacing.window_margin = Margin::same(14.0);
+    style.spacing.scroll.bar_width = 10.0;
+
+    ctx.set_style(style);
+}
+
+/// Accent-filled primary button. Returns true when clicked (and enabled).
+fn primary_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
+    let text = RichText::new(label).color(palette::ON_ACCENT).strong();
+    let btn = egui::Button::new(text)
+        .fill(palette::ACCENT)
+        .rounding(Rounding::same(7.0));
+    ui.add_enabled(enabled, btn).clicked()
+}
+
+/// A small coloured dot used in the category list.
+fn dot(cat: Category) -> RichText {
+    let c = match cat {
+        Category::Junk => palette::ACCENT,
+        Category::Trash => palette::BLUE,
+        Category::LargeFiles => palette::REVIEW,
+        Category::Duplicates => palette::PURPLE,
+    };
+    RichText::new("●").color(c)
 }
 
 /// Messages streamed from the background scan thread to the UI.
@@ -77,6 +166,7 @@ struct ScourApp {
     rx: Option<Receiver<Msg>>,
     status: String,
     scan_status: ScanStatus,
+    confirm_clean: bool,
 }
 
 impl ScourApp {
@@ -92,6 +182,7 @@ impl ScourApp {
             rx: None,
             status: "Ready. Click Scan to begin.".into(),
             scan_status: ScanStatus::default(),
+            confirm_clean: false,
         }
     }
 
@@ -243,106 +334,235 @@ impl ScourApp {
 impl eframe::App for ScourApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_messages();
+        if self.scanning {
+            ctx.request_repaint(); // keep the progress bar animating
+        }
 
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.heading("scour");
-                ui.separator();
-                let scan_label = if self.scanning { "Scanning…" } else { "Scan" };
-                if ui
-                    .add_enabled(!self.scanning, egui::Button::new(scan_label))
-                    .clicked()
-                {
-                    self.start_scan(ctx);
-                }
-                if ui
-                    .add_enabled(
-                        !self.scanning && !self.selected.is_empty(),
-                        egui::Button::new("Clean selection"),
-                    )
-                    .clicked()
-                {
-                    self.clean_selection();
-                }
-                if ui
-                    .add_enabled(!self.scanning, egui::Button::new("Select safe"))
-                    .clicked()
-                {
-                    self.select_all_safe_in_focus();
+        self.top_bar(ctx);
+        self.status_bar(ctx);
+        self.sidebar(ctx);
+        self.central(ctx);
+        self.confirm_modal(ctx);
+    }
+}
+
+impl ScourApp {
+    fn top_bar(&mut self, ctx: &egui::Context) {
+        let frame = egui::Frame::none()
+            .fill(palette::PANEL)
+            .inner_margin(Margin::symmetric(16.0, 12.0));
+        egui::TopBottomPanel::top("top")
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("scour").size(24.0).strong().color(palette::ACCENT));
+                    ui.label(RichText::new("disk cleaner").color(palette::MUTED));
+
+                    // Right-aligned reclaimable total.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if !self.report.findings.is_empty() {
+                            ui.vertical(|ui| {
+                                ui.with_layout(
+                                    egui::Layout::top_down(egui::Align::Max),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new(format_size(
+                                                self.report.total_size(),
+                                                BINARY,
+                                            ))
+                                            .size(20.0)
+                                            .strong()
+                                            .color(palette::INK),
+                                        );
+                                        ui.label(
+                                            RichText::new("reclaimable")
+                                                .small()
+                                                .color(palette::MUTED),
+                                        );
+                                    },
+                                );
+                            });
+                        }
+                    });
+                });
+
+                ui.add_space(10.0);
+
+                ui.horizontal(|ui| {
+                    let scan_label = if self.scanning { "Scanning…" } else { "Scan" };
+                    if primary_button(ui, scan_label, !self.scanning) {
+                        self.start_scan(ctx);
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.scanning && !self.report.findings.is_empty(),
+                            egui::Button::new("Select safe"),
+                        )
+                        .clicked()
+                    {
+                        self.select_all_safe_in_focus();
+                    }
+                    if ui
+                        .add_enabled(!self.selected.is_empty(), egui::Button::new("Clear"))
+                        .clicked()
+                    {
+                        self.selected.clear();
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let can_clean = !self.scanning && !self.selected.is_empty();
+                        let label =
+                            format!("Clean {} selected", self.selected.len());
+                        if primary_button(ui, &label, can_clean) {
+                            self.confirm_clean = true;
+                        }
+                    });
+                });
+
+                if self.scanning {
+                    ui.add_space(8.0);
+                    let t = ui.input(|i| i.time) as f32;
+                    let frac = 0.5 + 0.45 * (t * 1.6).sin();
+                    ui.add(
+                        egui::ProgressBar::new(frac)
+                            .fill(palette::ACCENT)
+                            .desired_height(6.0)
+                            .animate(true),
+                    );
                 }
             });
-            ui.add_space(4.0);
-        });
+    }
 
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.add_space(2.0);
-            if self.scanning {
+    fn status_bar(&mut self, ctx: &egui::Context) {
+        let frame = egui::Frame::none()
+            .fill(palette::PANEL)
+            .inner_margin(Margin::symmetric(16.0, 8.0));
+        egui::TopBottomPanel::bottom("status")
+            .frame(frame)
+            .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.spinner();
-                    let where_ = self
-                        .scan_status
-                        .current
-                        .as_deref()
-                        .and_then(|p| p.to_str())
-                        .unwrap_or("");
-                    ui.label(format!(
-                        "Scanning {}… {} entries, {} — {}",
-                        self.scan_status
-                            .category
-                            .map(|c| c.title())
-                            .unwrap_or("…"),
-                        self.scan_status.entries,
-                        format_size(self.scan_status.bytes, BINARY),
-                        shorten(where_, 70),
-                    ));
+                    if self.scanning {
+                        ui.spinner();
+                        let where_ = self
+                            .scan_status
+                            .current
+                            .as_deref()
+                            .and_then(|p| p.to_str())
+                            .unwrap_or("");
+                        ui.label(
+                            RichText::new(format!(
+                                "Scanning {}… {} entries, {} — {}",
+                                self.scan_status.category.map(|c| c.title()).unwrap_or("…"),
+                                self.scan_status.entries,
+                                format_size(self.scan_status.bytes, BINARY),
+                                shorten(where_, 64),
+                            ))
+                            .color(palette::MUTED),
+                        );
+                    } else {
+                        ui.label(RichText::new("●").color(palette::ACCENT).small());
+                        ui.label(RichText::new(&self.status).color(palette::MUTED));
+                    }
                 });
-            } else {
-                ui.label(&self.status);
-            }
-            ui.add_space(2.0);
-        });
+            });
+    }
 
+    fn sidebar(&mut self, ctx: &egui::Context) {
+        let frame = egui::Frame::none()
+            .fill(palette::PANEL)
+            .inner_margin(Margin::same(12.0));
         egui::SidePanel::left("categories")
             .resizable(false)
-            .exact_width(220.0)
+            .exact_width(236.0)
+            .frame(frame)
             .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("CATEGORIES")
+                        .small()
+                        .strong()
+                        .color(palette::MUTED),
+                );
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("Categories").strong());
-                ui.separator();
+
                 for cat in Category::ALL {
                     let total: u64 = self.report.by_category(cat).map(|f| f.size).sum();
                     let count = self.report.by_category(cat).count();
-                    let text = format!("{}  ({}, {})", cat.title(), count, format_size(total, BINARY));
-                    if ui
-                        .selectable_label(self.focused == cat, text)
-                        .clicked()
-                    {
+                    let selected = self.focused == cat;
+
+                    let fill = if selected { palette::CARD } else { palette::PANEL };
+                    let stroke = if selected {
+                        Stroke::new(1.0_f32, palette::ACCENT)
+                    } else {
+                        Stroke::new(1.0_f32, palette::STROKE)
+                    };
+                    let resp = egui::Frame::none()
+                        .fill(fill)
+                        .stroke(stroke)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(dot(cat));
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new(cat.title()).strong().color(palette::INK));
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{count} items · {}",
+                                            format_size(total, BINARY)
+                                        ))
+                                        .small()
+                                        .color(palette::MUTED),
+                                    );
+                                });
+                            });
+                        })
+                        .response;
+                    if resp.interact(egui::Sense::click()).clicked() {
                         self.focused = cat;
                     }
+                    ui.add_space(6.0);
                 }
-                ui.separator();
-                let sel = self.selected.len();
-                ui.label(format!(
-                    "Selected: {sel} items\n{}",
-                    format_size(self.selected_bytes(), BINARY)
-                ));
+
+                ui.add_space(4.0);
+                egui::Frame::none()
+                    .fill(palette::CARD)
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(Margin::same(10.0))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new("SELECTED").small().strong().color(palette::MUTED));
+                        ui.label(
+                            RichText::new(format_size(self.selected_bytes(), BINARY))
+                                .size(18.0)
+                                .strong()
+                                .color(palette::ACCENT),
+                        );
+                        ui.label(
+                            RichText::new(format!("{} items", self.selected.len()))
+                                .small()
+                                .color(palette::MUTED),
+                        );
+                    });
             });
+    }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new(self.focused.title()).heading());
-            ui.label(
-                egui::RichText::new(
-                    "Yellow = review · Red = manual (your own files; never auto-selected)",
-                )
-                .small()
-                .weak(),
-            );
-            ui.separator();
+    fn central(&mut self, ctx: &egui::Context) {
+        let frame = egui::Frame::none()
+            .fill(palette::BG)
+            .inner_margin(Margin::same(16.0));
+        egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(self.focused.title()).size(18.0).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    legend_chip(ui, "manual", palette::MANUAL);
+                    legend_chip(ui, "review", palette::REVIEW);
+                    legend_chip(ui, "safe", palette::ACCENT);
+                });
+            });
+            ui.add_space(8.0);
 
-            // Snapshot the focused findings' ids so we don't borrow self.report
-            // while mutating self.selected inside the loop.
+            // Snapshot to avoid borrowing self.report while mutating selection.
             let rows: Vec<(FindingId, u64, bool, RiskLevel, String)> = self
                 .report
                 .by_category(self.focused)
@@ -358,42 +578,170 @@ impl eframe::App for ScourApp {
                 .collect();
 
             if rows.is_empty() {
-                ui.add_space(12.0);
-                ui.weak("No findings in this category. Click Scan to (re)scan.");
+                ui.add_space(24.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        RichText::new("Nothing here yet")
+                            .size(16.0)
+                            .color(palette::MUTED),
+                    );
+                    ui.label(
+                        RichText::new("Click Scan to look for reclaimable files.")
+                            .small()
+                            .color(palette::MUTED),
+                    );
+                });
                 return;
             }
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for (id, size, privileged, risk, path) in rows {
-                    ui.horizontal(|ui| {
-                        let mut checked = self.selected.contains(&id);
-                        if ui.checkbox(&mut checked, "").changed() {
-                            if checked {
-                                self.selected.insert(id);
-                            } else {
-                                self.selected.remove(&id);
+            egui::Frame::none()
+                .fill(palette::CARD)
+                .rounding(Rounding::same(10.0))
+                .inner_margin(Margin::same(6.0))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for (i, (id, size, privileged, risk, path)) in
+                                rows.into_iter().enumerate()
+                            {
+                                let row_fill = if i % 2 == 0 {
+                                    palette::CARD
+                                } else {
+                                    palette::CARD_HOVER.linear_multiply(0.5)
+                                };
+                                egui::Frame::none()
+                                    .fill(row_fill)
+                                    .rounding(Rounding::same(5.0))
+                                    .inner_margin(Margin::symmetric(8.0, 5.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            let mut checked = self.selected.contains(&id);
+                                            if ui.checkbox(&mut checked, "").changed() {
+                                                if checked {
+                                                    self.selected.insert(id);
+                                                } else {
+                                                    self.selected.remove(&id);
+                                                }
+                                            }
+                                            ui.add_space(2.0);
+                                            ui.monospace(
+                                                RichText::new(format!(
+                                                    "{:>10}",
+                                                    format_size(size, BINARY)
+                                                ))
+                                                .color(palette::INK),
+                                            );
+                                            ui.add_space(6.0);
+                                            ui.label(
+                                                RichText::new(path).color(risk_color(risk)),
+                                            );
+                                            if privileged {
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        pill(ui, "needs privileges", palette::MUTED);
+                                                    },
+                                                );
+                                            }
+                                        });
+                                    });
                             }
-                        }
-                        ui.monospace(format!("{:>10}", format_size(size, BINARY)));
-                        let mut label = egui::RichText::new(path);
-                        label = match risk {
-                            RiskLevel::Safe => label,
-                            RiskLevel::Review => label.color(egui::Color32::from_rgb(200, 170, 0)),
-                            RiskLevel::Manual => label.color(egui::Color32::from_rgb(210, 80, 80)),
-                        };
-                        ui.label(label);
-                        if privileged {
-                            ui.label(
-                                egui::RichText::new("[needs privileges]")
-                                    .small()
-                                    .weak(),
-                            );
-                        }
-                    });
-                }
-            });
+                        });
+                });
         });
     }
+
+    fn confirm_modal(&mut self, ctx: &egui::Context) {
+        if !self.confirm_clean {
+            return;
+        }
+        let count = self.selected.len();
+        let bytes = self.selected_bytes();
+        let mut close = false;
+        let mut do_clean = false;
+
+        egui::Window::new("Confirm cleanup")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.set_width(360.0);
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Delete {count} item(s), freeing {}?",
+                        format_size(bytes, BINARY)
+                    ))
+                    .size(15.0)
+                    .strong(),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(
+                        "This permanently removes the selected files. Protected paths \
+                         (keys, wallets, credentials) are always skipped. Items needing \
+                         system privileges are left for `scour clean --apply`.",
+                    )
+                    .small()
+                    .color(palette::MUTED),
+                );
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn = egui::Button::new(
+                            RichText::new("Delete").color(Color32::WHITE).strong(),
+                        )
+                        .fill(palette::MANUAL)
+                        .rounding(Rounding::same(7.0));
+                        if ui.add(btn).clicked() {
+                            do_clean = true;
+                        }
+                    });
+                });
+                ui.add_space(2.0);
+            });
+
+        if do_clean {
+            self.clean_selection();
+            self.confirm_clean = false;
+        } else if close {
+            self.confirm_clean = false;
+        }
+    }
+}
+
+fn risk_color(risk: RiskLevel) -> Color32 {
+    match risk {
+        RiskLevel::Safe => palette::INK,
+        RiskLevel::Review => palette::REVIEW,
+        RiskLevel::Manual => palette::MANUAL,
+    }
+}
+
+/// A small coloured legend chip: "● label".
+fn legend_chip(ui: &mut egui::Ui, label: &str, color: Color32) {
+    ui.label(RichText::new("●").color(color).small());
+    ui.label(RichText::new(label).small().color(palette::MUTED));
+    ui.add_space(8.0);
+}
+
+/// A small rounded pill badge.
+fn pill(ui: &mut egui::Ui, text: &str, color: Color32) {
+    egui::Frame::none()
+        .fill(palette::BG)
+        .stroke(Stroke::new(1.0_f32, color.linear_multiply(0.5)))
+        .rounding(Rounding::same(10.0))
+        .inner_margin(Margin::symmetric(8.0, 2.0))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).small().color(color));
+        });
 }
 
 /// Merge config `allow_roots` into `SCOUR_ALLOW_ROOT`, as the CLI does.
