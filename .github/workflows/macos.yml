@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14 # Apple Silicon; builds both arches via rustup
+    runs-on: macos-13 # Intel runner (widely available); builds BOTH arches via rustup + lipo
     steps:
       - uses: actions/checkout@v4
 
