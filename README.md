@@ -125,8 +125,26 @@ system locations (e.g. `/Library/Caches` on macOS) are routed to
 
 ```bash
 cargo build --release
-# binaries in target/release/: scour, scour-tui, scour-helperd
+# binaries in target/release/: scour, scour-tui, scour-gui, scour-helperd
 ```
+
+## macOS build
+
+Mach-O binaries must be linked on macOS (Linux can't produce them). The code
+type-checks for `aarch64-apple-darwin` and `x86_64-apple-darwin`; to get real
+artifacts:
+
+- **On a Mac**: run `./packaging/macos/build-app.sh` from the repo root. It
+  builds universal (Apple Silicon + Intel) binaries, bundles the GUI into
+  `scour.app`, ships the CLI tools in `Contents/MacOS`, and produces
+  `target/macos/scour.dmg`.
+- **Via CI**: the [`macOS build`](.github/workflows/macos.yml) workflow does the
+  same on a GitHub `macos-14` runner and uploads `scour.app`, `scour.dmg` and
+  the CLI tools as artifacts. Trigger it manually (workflow_dispatch) or by
+  pushing a `v*` tag.
+
+Binaries are unsigned; on first launch right-click → Open, or
+`xattr -dr com.apple.quarantine scour.app`.
 
 ## Packaging (Arch / Omarchy)
 

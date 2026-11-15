@@ -1,0 +1,51 @@
+name: macOS build
+
+# Produces real macOS artifacts (a universal scour.app and scour.dmg) on an
+# Apple-hosted runner. Linux cannot link Mach-O binaries, so this is the
+# supported way to get Mac builds. Trigger it manually or on a tag.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-14 # Apple Silicon; builds both arches via rustup
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build universal app + dmg
+        run: ./packaging/macos/build-app.sh
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: scour-macos-app
+          path: target/macos/scour.app
+
+      - name: Upload dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: scour-macos-dmg
+          path: target/macos/scour.dmg
+
+      - name: Upload CLI tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: scour-macos-cli
+          path: target/macos/bin/
