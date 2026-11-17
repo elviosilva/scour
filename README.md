@@ -134,14 +134,21 @@ Mach-O binaries must be linked on macOS (Linux can't produce them). The code
 type-checks for `aarch64-apple-darwin` and `x86_64-apple-darwin`; to get real
 artifacts:
 
-- **On a Mac**: run `./packaging/macos/build-app.sh` from the repo root. It
-  builds universal (Apple Silicon + Intel) binaries, bundles the GUI into
-  `scour.app`, ships the CLI tools in `Contents/MacOS`, and produces
-  `target/macos/scour.dmg`.
+- **On a Mac (recommended)**: run `./packaging/macos/build-on-mac.sh` from the
+  repo root. It installs the two prerequisites if missing (Xcode Command Line
+  Tools, rustup), then builds universal (Apple Silicon + Intel) binaries,
+  bundles the GUI into `scour.app`, ships the CLI tools in `Contents/MacOS`, and
+  produces `target/macos/scour.dmg`. Full walkthrough:
+  [`packaging/macos/BUILD-ON-MAC.md`](packaging/macos/BUILD-ON-MAC.md). If Rust
+  and the Command Line Tools are already present, `./packaging/macos/build-app.sh`
+  does the build directly.
 - **Via CI**: the [`macOS build`](.github/workflows/macos.yml) workflow does the
-  same on a GitHub `macos-14` runner and uploads `scour.app`, `scour.dmg` and
+  same on a GitHub `macos-13` runner and uploads `scour.app`, `scour.dmg` and
   the CLI tools as artifacts. Trigger it manually (workflow_dispatch) or by
-  pushing a `v*` tag.
+  pushing a `v*` tag. Note: GitHub only allocates macOS runners to accounts with
+  a payment method on file (public repos are not billed, but the card must
+  exist); without it the job sits queued and is eventually cancelled — use the
+  on-a-Mac path above instead.
 
 Binaries are unsigned; on first launch right-click → Open, or
 `xattr -dr com.apple.quarantine scour.app`.
